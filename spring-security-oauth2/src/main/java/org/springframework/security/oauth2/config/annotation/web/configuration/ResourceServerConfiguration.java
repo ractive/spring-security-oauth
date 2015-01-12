@@ -20,9 +20,13 @@ import java.util.List;
 
 import javax.servlet.http.HttpServletRequest;
 
+import org.springframework.beans.factory.BeanCreationException;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.Ordered;
+import org.springframework.security.authentication.AnonymousAuthenticationProvider;
+import org.springframework.security.config.annotation.authentication.builders.AuthenticationManagerBuilder;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity.RequestMatcherConfigurer;
 import org.springframework.security.config.annotation.web.configuration.WebSecurityConfigurerAdapter;
@@ -41,14 +45,17 @@ import org.springframework.security.web.util.matcher.RequestMatcher;
  */
 @Configuration
 public class ResourceServerConfiguration extends WebSecurityConfigurerAdapter implements Ordered {
-	
+
 	private int order = 3;
 
 	@Autowired(required = false)
 	private TokenStore tokenStore;
 
 	@Autowired(required = false)
-	private ResourceServerTokenServices tokenServices;
+	private ResourceServerTokenServices[] tokenServices;
+
+	@Autowired
+	private ApplicationContext context;
 
 	private List<ResourceServerConfigurer> configurers = Collections.emptyList();
 
@@ -56,7 +63,7 @@ public class ResourceServerConfiguration extends WebSecurityConfigurerAdapter im
 
 	@Autowired(required = false)
 	private AuthorizationServerEndpointsConfiguration endpoints;
-	
+
 	@Override
 	public int getOrder() {
 		return order;
@@ -105,6 +112,13 @@ public class ResourceServerConfiguration extends WebSecurityConfigurerAdapter im
 
 	}
 
+	@Autowired
+	protected void init(AuthenticationManagerBuilder builder) {
+		if (!builder.isConfigured()) {
+			builder.authenticationProvider(new AnonymousAuthenticationProvider("default"));
+		}
+	}
+
 	@Override
 	protected void configure(HttpSecurity http) throws Exception {
 		RequestMatcherConfigurer requests = http.requestMatchers();
@@ -132,17 +146,45 @@ public class ResourceServerConfiguration extends WebSecurityConfigurerAdapter im
 		http.authorizeRequests().expressionHandler(new OAuth2WebSecurityExpressionHandler());
 		ResourceServerSecurityConfigurer resources = new ResourceServerSecurityConfigurer();
 		http.apply(resources);
-		if (tokenServices != null) {
-			resources.tokenServices(tokenServices);
-		}
-		else {
+		ResourceServerTokenServices services = resolveTokenServices();
+		if (services != null) {
+			resources.tokenServices(services);
+		} else {
 			if (tokenStore != null) {
 				resources.tokenStore(tokenStore);
+			} else if (endpoints!=null) {
+				resources.tokenStore(endpoints.getEndpointsConfigurer().getTokenStore());
 			}
 		}
 		for (ResourceServerConfigurer configurer : configurers) {
 			configurer.configure(resources);
 		}
+	}
+
+	private ResourceServerTokenServices resolveTokenServices() {
+		if (tokenServices == null || tokenServices.length == 0) {
+			return null;
+		}
+		if (tokenServices.length == 1) {
+			return tokenServices[0];
+		}
+		if (tokenServices.length == 2 && tokenServices[0] == tokenServices[1]) {
+			return tokenServices[0];
+		}
+		try {
+			TokenServicesConfiguration bean = context.getAutowireCapableBeanFactory().createBean(
+					TokenServicesConfiguration.class);
+			return bean.services;
+		}
+		catch (BeanCreationException e) {
+			throw new IllegalStateException(
+					"Could not wire ResourceServerTokenServices: please create a bean definition and mark it as @Primary.");
+		}
+	}
+
+	private static class TokenServicesConfiguration {
+		@Autowired
+		private ResourceServerTokenServices services;
 	}
 
 }

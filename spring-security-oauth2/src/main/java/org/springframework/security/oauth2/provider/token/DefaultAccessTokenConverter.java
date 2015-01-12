@@ -52,6 +52,10 @@ public class DefaultAccessTokenConverter implements AccessTokenConverter {
 
 		if (!authentication.isClientOnly()) {
 			response.putAll(userTokenConverter.convertUserAuthentication(authentication.getUserAuthentication()));
+		} else {
+			if (clientToken.getAuthorities()!=null && !clientToken.getAuthorities().isEmpty()) {
+				response.put(UserAuthenticationConverter.AUTHORITIES, clientToken.getAuthorities());
+			}
 		}
 
 		if (token.getScope()!=null) {
@@ -82,7 +86,7 @@ public class DefaultAccessTokenConverter implements AccessTokenConverter {
 		info.remove(CLIENT_ID);
 		info.remove(SCOPE);
 		if (map.containsKey(EXP)) {
-			token.setExpiration(new Date((Integer) map.get(EXP) * 1000L));
+			token.setExpiration(new Date((Long) map.get(EXP) * 1000L));
 		}
 		if (map.containsKey(JTI)) {
 			info.put(JTI, map.get(JTI));

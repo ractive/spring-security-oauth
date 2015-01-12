@@ -21,6 +21,8 @@ import java.util.List;
 import java.util.Map;
 
 import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.oauth2.config.annotation.configurers.ClientDetailsServiceConfigurer;
+import org.springframework.security.oauth2.config.annotation.web.configuration.AuthorizationServerConfigurerAdapter;
 import org.springframework.security.oauth2.provider.ClientDetailsService;
 import org.springframework.security.oauth2.provider.CompositeTokenGranter;
 import org.springframework.security.oauth2.provider.OAuth2RequestFactory;
@@ -57,7 +59,7 @@ import org.springframework.web.context.request.WebRequestInterceptor;
 import org.springframework.web.servlet.HandlerInterceptor;
 
 /**
- * Configure the properties and enhanced functionality of the Authorization Server endpoints. 
+ * Configure the properties and enhanced functionality of the Authorization Server endpoints.
  * 
  * @author Rob Winch
  * @author Dave Syer
@@ -92,7 +94,7 @@ public final class AuthorizationServerEndpointsConfigurer {
 	private AuthenticationManager authenticationManager;
 
 	private ClientDetailsService clientDetailsService;
-	
+
 	private String prefix;
 
 	private Map<String, String> patternMap = new HashMap<String, String>();
@@ -102,6 +104,12 @@ public final class AuthorizationServerEndpointsConfigurer {
 	private boolean approvalStoreDisabled;
 
 	private List<Object> interceptors = new ArrayList<Object>();
+
+	private DefaultTokenServices defaultTokenServices;
+
+	private boolean tokenServicesOverride = false;
+
+	private boolean reuseRefreshToken;
 
 	public AuthorizationServerTokenServices getTokenServices() {
 		return tokenServices;
@@ -149,6 +157,11 @@ public final class AuthorizationServerEndpointsConfigurer {
 		return this;
 	}
 
+	public AuthorizationServerEndpointsConfigurer reuseRefreshTokens() {
+		this.reuseRefreshToken = true;
+		return this;
+	}
+
 	public AuthorizationServerEndpointsConfigurer accessTokenConverter(AccessTokenConverter accessTokenConverter) {
 		this.accessTokenConverter = accessTokenConverter;
 		return this;
@@ -156,7 +169,12 @@ public final class AuthorizationServerEndpointsConfigurer {
 
 	public AuthorizationServerEndpointsConfigurer tokenServices(AuthorizationServerTokenServices tokenServices) {
 		this.tokenServices = tokenServices;
+		this.tokenServicesOverride = true;
 		return this;
+	}
+
+	public boolean isTokenServicesOverride() {
+		return tokenServicesOverride;
 	}
 
 	public AuthorizationServerEndpointsConfigurer userApprovalHandler(UserApprovalHandler approvalHandler) {
@@ -197,6 +215,12 @@ public final class AuthorizationServerEndpointsConfigurer {
 		return this;
 	}
 
+	/**
+	 * The AuthenticationManager for the password grant.
+	 * 
+	 * @param builder an AuthenticationManager, fully initialized
+	 * @return this for a fluent style
+	 */
 	public AuthorizationServerEndpointsConfigurer authenticationManager(AuthenticationManager authenticationManager) {
 		this.authenticationManager = authenticationManager;
 		return this;
@@ -207,9 +231,12 @@ public final class AuthorizationServerEndpointsConfigurer {
 		return this;
 	}
 
-	public AuthorizationServerEndpointsConfigurer clientDetailsService(ClientDetailsService clientDetailsService) {
+	/**
+	 * N.B. this method is not part of the public API. To set up a custom ClientDetailsService please use
+	 * {@link AuthorizationServerConfigurerAdapter#configure(ClientDetailsServiceConfigurer)}.
+	 */
+	public void setClientDetailsService(ClientDetailsService clientDetailsService) {
 		this.clientDetailsService = clientDetailsService;
-		return this;
 	}
 
 	public AuthorizationServerEndpointsConfigurer requestFactory(OAuth2RequestFactory requestFactory) {
@@ -257,7 +284,7 @@ public final class AuthorizationServerEndpointsConfigurer {
 			if (tokenServices instanceof ResourceServerTokenServices) {
 				return (ResourceServerTokenServices) tokenServices;
 			}
-			resourceTokenServices = createTokenServices();
+			resourceTokenServices = createDefaultTokenServices();
 		}
 		return resourceTokenServices;
 	}
@@ -267,7 +294,7 @@ public final class AuthorizationServerEndpointsConfigurer {
 			if (tokenServices instanceof ConsumerTokenServices) {
 				return (ConsumerTokenServices) tokenServices;
 			}
-			consumerTokenServices = createTokenServices();
+			consumerTokenServices = createDefaultTokenServices();
 		}
 		return consumerTokenServices;
 	}
@@ -276,20 +303,29 @@ public final class AuthorizationServerEndpointsConfigurer {
 		if (tokenServices != null) {
 			return tokenServices;
 		}
-		this.tokenServices = createTokenServices();
+		this.tokenServices = createDefaultTokenServices();
 		return tokenServices;
 	}
 
-	private DefaultTokenServices createTokenServices() {
+	public AuthorizationServerTokenServices getDefaultAuthorizationServerTokenServices() {
+		if (defaultTokenServices != null) {
+			return defaultTokenServices;
+		}
+		this.defaultTokenServices = createDefaultTokenServices();
+		return this.defaultTokenServices;
+	}
+
+	private DefaultTokenServices createDefaultTokenServices() {
 		DefaultTokenServices tokenServices = new DefaultTokenServices();
 		tokenServices.setTokenStore(tokenStore());
 		tokenServices.setSupportRefreshToken(true);
+		tokenServices.setReuseRefreshToken(reuseRefreshToken);
 		tokenServices.setClientDetailsService(clientDetailsService());
-		tokenServices.setTokenEnhancer(tokenEnchancer());
+		tokenServices.setTokenEnhancer(tokenEnhancer());
 		return tokenServices;
 	}
 
-	private TokenEnhancer tokenEnchancer() {
+	private TokenEnhancer tokenEnhancer() {
 		if (this.tokenEnhancer == null && accessTokenConverter() instanceof JwtAccessTokenConverter) {
 			tokenEnhancer = (TokenEnhancer) accessTokenConverter;
 		}
@@ -409,7 +445,7 @@ public final class AuthorizationServerEndpointsConfigurer {
 			frameworkEndpointHandlerMapping = new FrameworkEndpointHandlerMapping();
 			frameworkEndpointHandlerMapping.setMappings(patternMap);
 			frameworkEndpointHandlerMapping.setPrefix(prefix);
-			frameworkEndpointHandlerMapping.setInterceptors(interceptors .toArray());
+			frameworkEndpointHandlerMapping.setInterceptors(interceptors.toArray());
 		}
 		return frameworkEndpointHandlerMapping;
 	}

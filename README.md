@@ -79,10 +79,10 @@ request but before a merge.
 * Use the Spring Framework code format conventions. Import `eclipse-code-formatter.xml` from the root of the project
   if you are using Eclipse. If using IntelliJ, copy `spring-intellij-code-style.xml` to `~/.IntelliJIdea*/config/codestyles`
   and select spring-intellij-code-style from Settings -> Code Styles.
-* Make sure all new .java files to have a simple Javadoc class comment with at least an @author tag identifying you, and
+* Make sure all new .java files have a simple Javadoc class comment with at least an @author tag identifying you, and
   preferably at least a paragraph on what the class is for.
 * Add the ASF license header comment to all new .java files (copy from existing files in the project)
-* Add yourself as an @author to the .java files that you modify substantially (moew than cosmetic changes).
+* Add yourself as an @author to the .java files that you modify substantially (more than cosmetic changes).
 * Add some Javadocs and, if you change the namespace, some XSD doc elements.
 * A few unit tests would help a lot as well - someone has to do it.
 * If no-one else is using your branch, please rebase it against the current master (or other target branch in the main project).

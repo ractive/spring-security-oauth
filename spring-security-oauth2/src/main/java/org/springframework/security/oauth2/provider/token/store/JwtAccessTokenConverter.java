@@ -12,6 +12,10 @@
  */
 package org.springframework.security.oauth2.provider.token.store;
 
+import java.security.KeyPair;
+import java.security.PrivateKey;
+import java.security.interfaces.RSAPrivateKey;
+import java.security.interfaces.RSAPublicKey;
 import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -20,6 +24,7 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.codehaus.jackson.map.ObjectMapper;
 import org.springframework.beans.factory.InitializingBean;
+import org.springframework.security.crypto.codec.Base64;
 import org.springframework.security.jwt.Jwt;
 import org.springframework.security.jwt.JwtHelper;
 import org.springframework.security.jwt.crypto.sign.InvalidSignatureException;
@@ -112,6 +117,15 @@ public class JwtAccessTokenConverter implements TokenEnhancer, AccessTokenConver
 		result.put("alg", signer.algorithm());
 		result.put("value", verifierKey);
 		return result;
+	}
+	
+	public void setKeyPair(KeyPair keyPair) {
+		PrivateKey privateKey = keyPair.getPrivate();
+		Assert.state(privateKey instanceof RSAPrivateKey, "KeyPair must be an RSA ");
+		signer = new RsaSigner((RSAPrivateKey) privateKey);
+		RSAPublicKey publicKey = (RSAPublicKey) keyPair.getPublic();
+		verifier = new RsaVerifier(publicKey);
+		verifierKey = "-----BEGIN PUBLIC KEY-----\n" + new String(Base64.encode(publicKey.getEncoded())) + "\n-----END PUBLIC KEY-----";
 	}
 
 	/**
@@ -216,6 +230,10 @@ public class JwtAccessTokenConverter implements TokenEnhancer, AccessTokenConver
 			String content = jwt.getClaims();
 			@SuppressWarnings("unchecked")
 			Map<String, Object> map = objectMapper.readValue(content, Map.class);
+			if (map.containsKey(EXP) && map.get(EXP) instanceof Integer) {
+				Integer intValue = (Integer) map.get(EXP);
+				map.put(EXP, new Long(intValue));
+			}
 			return map;
 		}
 		catch (Exception e) {
@@ -224,17 +242,15 @@ public class JwtAccessTokenConverter implements TokenEnhancer, AccessTokenConver
 	}
 
 	public void afterPropertiesSet() throws Exception {
+		SignatureVerifier verifier = new MacSigner(verifierKey);
+		try {
+			verifier = new RsaVerifier(verifierKey);
+		}
+		catch (Exception e) {
+			logger.warn("Unable to create an RSA verifier from verifierKey (ignoreable if using MAC)");
+		}
 		// Check the signing and verification keys match
 		if (signer instanceof RsaSigner) {
-			RsaVerifier verifier;
-			try {
-				verifier = new RsaVerifier(verifierKey);
-			}
-			catch (Exception e) {
-				logger.warn("Unable to create an RSA verifier from verifierKey");
-				return;
-			}
-
 			byte[] test = "test".getBytes();
 			try {
 				verifier.verify(test, signer.sign(test));
@@ -244,17 +260,10 @@ public class JwtAccessTokenConverter implements TokenEnhancer, AccessTokenConver
 				logger.error("Signing and verification RSA keys do not match");
 			}
 		}
-		else {
+		else if (verifier instanceof  MacSigner){
 			// Avoid a race condition where setters are called in the wrong order. Use of == is intentional.
 			Assert.state(this.signingKey == this.verifierKey,
 					"For MAC signing you do not need to specify the verifier key separately, and if you do it must match the signing key");
-		}
-		SignatureVerifier verifier = new MacSigner(verifierKey);
-		try {
-			verifier = new RsaVerifier(verifierKey);
-		}
-		catch (Exception e) {
-			logger.warn("Unable to create an RSA verifier from verifierKey");
 		}
 		this.verifier = verifier;
 	}

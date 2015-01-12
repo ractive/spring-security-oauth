@@ -310,11 +310,29 @@ public abstract class AbstractAuthorizationCodeProviderTests extends AbstractInt
 		}
 	}
 
-	private ResponseEntity<String> attemptToGetConfirmationPage(String clientId, String redirectUri) {
-		HttpHeaders headers = getAuthenticatedHeaders();
-		return http.getForString(getAuthorizeUrl(clientId, redirectUri, "read"), headers);
+	protected ResponseEntity<String> attemptToGetConfirmationPage(String clientId, String redirectUri) {
+		return attemptToGetConfirmationPage(clientId, redirectUri, "code");
 	}
 
+	protected ResponseEntity<String> attemptToGetConfirmationPage(String clientId, String redirectUri, String responseType) {
+	    HttpHeaders headers = getAuthenticatedHeaders();
+	    return http.getForString(getAuthorizeUrl(clientId, redirectUri, responseType, "read"), headers);
+	}
+
+	private String getAuthorizeUrl(String clientId, String redirectUri, String responseType, String scope) {
+	    UriBuilder uri = http.buildUri(authorizePath()).queryParam("state", "mystateid").queryParam("scope", scope);
+	    if (responseType != null) {
+	        uri.queryParam("response_type", responseType);
+	    }
+	    if (clientId != null) {
+	        uri.queryParam("client_id", clientId);
+	    }
+	    if (redirectUri != null) {
+	        uri.queryParam("redirect_uri", redirectUri);
+	    }
+	    return uri.build().toString();
+	}
+	
 	private HttpHeaders getAuthenticatedHeaders() {
 		HttpHeaders headers = new HttpHeaders();
 		headers.setAccept(Arrays.asList(MediaType.TEXT_HTML));

@@ -43,9 +43,8 @@ import org.springframework.security.oauth2.provider.endpoint.TokenEndpoint;
 import org.springframework.security.oauth2.provider.endpoint.TokenKeyEndpoint;
 import org.springframework.security.oauth2.provider.endpoint.WhitelabelApprovalEndpoint;
 import org.springframework.security.oauth2.provider.endpoint.WhitelabelErrorEndpoint;
+import org.springframework.security.oauth2.provider.token.AuthorizationServerTokenServices;
 import org.springframework.security.oauth2.provider.token.ConsumerTokenServices;
-import org.springframework.security.oauth2.provider.token.TokenStore;
-import org.springframework.security.oauth2.provider.token.store.InMemoryTokenStore;
 import org.springframework.security.oauth2.provider.token.store.JwtAccessTokenConverter;
 
 /**
@@ -56,13 +55,6 @@ import org.springframework.security.oauth2.provider.token.store.JwtAccessTokenCo
 @Import(TokenKeyEndpointRegistrar.class)
 public class AuthorizationServerEndpointsConfiguration {
 
-	/**
-	 * The static bean name for a TokenStore if any. If the use creates his own bean with the same name, or else an
-	 * ApprovalStore named {@link #APPROVAL_STORE_BEAN_NAME}, then Spring will create an {@link InMemoryTokenStore}.
-	 * 
-	 */
-	public static final String TOKEN_STORE_BEAN_NAME = "tokenStore";
-
 	private AuthorizationServerEndpointsConfigurer endpoints = new AuthorizationServerEndpointsConfigurer();
 
 	@Autowired
@@ -72,17 +64,22 @@ public class AuthorizationServerEndpointsConfiguration {
 	private List<AuthorizationServerConfigurer> configurers = Collections.emptyList();
 
 	@PostConstruct
-	public void init() throws Exception {
+	public void init() {
 		for (AuthorizationServerConfigurer configurer : configurers) {
-			configurer.configure(endpoints);
+			try {
+				configurer.configure(endpoints);
+			}
+			catch (Exception e) {
+				throw new IllegalStateException("Cannot configure enpdoints", e);
+			}
 		}
-		endpoints.clientDetailsService(clientDetailsService);
+		endpoints.setClientDetailsService(clientDetailsService);
 	}
 
 	@Bean
 	public AuthorizationEndpoint authorizationEndpoint() throws Exception {
 		AuthorizationEndpoint authorizationEndpoint = new AuthorizationEndpoint();
-		FrameworkEndpointHandlerMapping mapping = endpoints.getFrameworkEndpointHandlerMapping();
+		FrameworkEndpointHandlerMapping mapping = getEndpointsConfigurer().getFrameworkEndpointHandlerMapping();
 		authorizationEndpoint.setUserApprovalPage(extractPath(mapping, "/oauth/confirm_access"));
 		authorizationEndpoint.setErrorPage(extractPath(mapping, "/oauth/error"));
 		authorizationEndpoint.setTokenGranter(tokenGranter());
@@ -106,8 +103,8 @@ public class AuthorizationServerEndpointsConfiguration {
 
 	@Bean
 	public CheckTokenEndpoint checkTokenEndpoint() {
-		CheckTokenEndpoint endpoint = new CheckTokenEndpoint(endpoints.getResourceServerTokenServices());
-		endpoint.setAccessTokenConverter(endpoints.getAccessTokenConverter());
+		CheckTokenEndpoint endpoint = new CheckTokenEndpoint(getEndpointsConfigurer().getResourceServerTokenServices());
+		endpoint.setAccessTokenConverter(getEndpointsConfigurer().getAccessTokenConverter());
 		return endpoint;
 	}
 
@@ -123,37 +120,51 @@ public class AuthorizationServerEndpointsConfiguration {
 
 	@Bean
 	public FrameworkEndpointHandlerMapping oauth2EndpointHandlerMapping() throws Exception {
-		return endpoints.getFrameworkEndpointHandlerMapping();
+		return getEndpointsConfigurer().getFrameworkEndpointHandlerMapping();
 	}
 
 	@Bean
 	public ConsumerTokenServices consumerTokenServices() throws Exception {
-		return endpoints.getConsumerTokenServices();
+		return getEndpointsConfigurer().getConsumerTokenServices();
 	}
 
+	/**
+	 * This needs to be a <code>@Bean</code> so that it can be <code>@Transactional</code> (in case the token store
+	 * supports them). If you are overriding the token services in an {@link AuthorizationServerConfigurer} consider
+	 * making it a <code>@Bean</code> for the same reason (assuming you need transactions, e.g. for a JDBC token store).
+	 * 
+	 * @return an AuthorizationServerTokenServices
+	 */
 	@Bean
-	public TokenStore tokenStore() throws Exception {
-		return endpoints.getTokenStore();
+	public AuthorizationServerTokenServices defaultAuthorizationServerTokenServices() {
+		return endpoints.getDefaultAuthorizationServerTokenServices();
+	}
+
+	public AuthorizationServerEndpointsConfigurer getEndpointsConfigurer() {
+		if (!endpoints.isTokenServicesOverride()) {
+			endpoints.tokenServices(defaultAuthorizationServerTokenServices());
+		}
+		return endpoints;
 	}
 
 	private OAuth2RequestFactory oauth2RequestFactory() throws Exception {
-		return endpoints.getOAuth2RequestFactory();
+		return getEndpointsConfigurer().getOAuth2RequestFactory();
 	}
 
 	private UserApprovalHandler userApprovalHandler() throws Exception {
-		return endpoints.getUserApprovalHandler();
+		return getEndpointsConfigurer().getUserApprovalHandler();
 	}
 
 	private OAuth2RequestValidator oauth2RequestValidator() throws Exception {
-		return endpoints.getOAuth2RequestValidator();
+		return getEndpointsConfigurer().getOAuth2RequestValidator();
 	}
 
 	private AuthorizationCodeServices authorizationCodeServices() throws Exception {
-		return endpoints.getAuthorizationCodeServices();
+		return getEndpointsConfigurer().getAuthorizationCodeServices();
 	}
 
 	private TokenGranter tokenGranter() throws Exception {
-		return endpoints.getTokenGranter();
+		return getEndpointsConfigurer().getTokenGranter();
 	}
 
 	private String extractPath(FrameworkEndpointHandlerMapping mapping, String page) {
@@ -171,7 +182,8 @@ public class AuthorizationServerEndpointsConfiguration {
 
 		@Override
 		public void postProcessBeanFactory(ConfigurableListableBeanFactory beanFactory) throws BeansException {
-			String[] names = BeanFactoryUtils.beanNamesForTypeIncludingAncestors(beanFactory, JwtAccessTokenConverter.class);
+			String[] names = BeanFactoryUtils.beanNamesForTypeIncludingAncestors(beanFactory,
+					JwtAccessTokenConverter.class);
 			if (names.length > 0) {
 				BeanDefinitionBuilder builder = BeanDefinitionBuilder.rootBeanDefinition(TokenKeyEndpoint.class);
 				builder.addConstructorArgReference(names[0]);
