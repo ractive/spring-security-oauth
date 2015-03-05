@@ -26,17 +26,16 @@ import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.Ordered;
 import org.springframework.security.authentication.AnonymousAuthenticationProvider;
+import org.springframework.security.authentication.AuthenticationEventPublisher;
 import org.springframework.security.config.annotation.authentication.builders.AuthenticationManagerBuilder;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity.RequestMatcherConfigurer;
 import org.springframework.security.config.annotation.web.configuration.WebSecurityConfigurerAdapter;
+import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.oauth2.config.annotation.web.configurers.ResourceServerSecurityConfigurer;
 import org.springframework.security.oauth2.provider.endpoint.FrameworkEndpointHandlerMapping;
-import org.springframework.security.oauth2.provider.error.OAuth2AccessDeniedHandler;
-import org.springframework.security.oauth2.provider.expression.OAuth2WebSecurityExpressionHandler;
 import org.springframework.security.oauth2.provider.token.ResourceServerTokenServices;
 import org.springframework.security.oauth2.provider.token.TokenStore;
-import org.springframework.security.web.access.AccessDeniedHandler;
 import org.springframework.security.web.util.matcher.RequestMatcher;
 
 /**
@@ -52,14 +51,15 @@ public class ResourceServerConfiguration extends WebSecurityConfigurerAdapter im
 	private TokenStore tokenStore;
 
 	@Autowired(required = false)
+	private AuthenticationEventPublisher eventPublisher;
+
+	@Autowired(required = false)
 	private ResourceServerTokenServices[] tokenServices;
 
 	@Autowired
 	private ApplicationContext context;
 
 	private List<ResourceServerConfigurer> configurers = Collections.emptyList();
-
-	private AccessDeniedHandler accessDeniedHandler = new OAuth2AccessDeniedHandler();
 
 	@Autowired(required = false)
 	private AuthorizationServerEndpointsConfiguration endpoints;
@@ -121,18 +121,40 @@ public class ResourceServerConfiguration extends WebSecurityConfigurerAdapter im
 
 	@Override
 	protected void configure(HttpSecurity http) throws Exception {
+		ResourceServerSecurityConfigurer resources = new ResourceServerSecurityConfigurer();
+		ResourceServerTokenServices services = resolveTokenServices();
+		if (services != null) {
+			resources.tokenServices(services);
+		}
+		else {
+			if (tokenStore != null) {
+				resources.tokenStore(tokenStore);
+			}
+			else if (endpoints != null) {
+				resources.tokenStore(endpoints.getEndpointsConfigurer().getTokenStore());
+			}
+		}
+		if (eventPublisher != null) {
+			resources.eventPublisher(eventPublisher);
+		}
+		for (ResourceServerConfigurer configurer : configurers) {
+			configurer.configure(resources);
+		}
+		// @formatter:off	
+		http
+			// N.B. exceptionHandling is duplicated in resources.configure() so that it works
+			.exceptionHandling().accessDeniedHandler(resources.getAccessDeniedHandler())
+		.and()
+			.sessionManagement().sessionCreationPolicy(SessionCreationPolicy.STATELESS)
+		.and()
+			.csrf().disable();
+		// @formatter:on
+		http.apply(resources);
 		RequestMatcherConfigurer requests = http.requestMatchers();
 		if (endpoints != null) {
 			// Assume we are in an Authorization Server
 			requests.requestMatchers(new NotOAuthRequestMatcher(endpoints.oauth2EndpointHandlerMapping()));
 		}
-		// @formatter:off	
-		http
-			.exceptionHandling().accessDeniedHandler(accessDeniedHandler)
-		.and()
-			.anonymous().disable()
-			.csrf().disable();
-		// @formatter:on
 		for (ResourceServerConfigurer configurer : configurers) {
 			// Delegates can add authorizeRequests() here
 			configurer.configure(http);
@@ -141,23 +163,6 @@ public class ResourceServerConfiguration extends WebSecurityConfigurerAdapter im
 			// Add anyRequest() last as a fall back. Spring Security would replace an existing anyRequest() matcher
 			// with this one, so to avoid that we only add it if the user hasn't configured anything.
 			http.authorizeRequests().anyRequest().authenticated();
-		}
-		// And set the default expression handler in case one isn't explicit elsewhere
-		http.authorizeRequests().expressionHandler(new OAuth2WebSecurityExpressionHandler());
-		ResourceServerSecurityConfigurer resources = new ResourceServerSecurityConfigurer();
-		http.apply(resources);
-		ResourceServerTokenServices services = resolveTokenServices();
-		if (services != null) {
-			resources.tokenServices(services);
-		} else {
-			if (tokenStore != null) {
-				resources.tokenStore(tokenStore);
-			} else if (endpoints!=null) {
-				resources.tokenStore(endpoints.getEndpointsConfigurer().getTokenStore());
-			}
-		}
-		for (ResourceServerConfigurer configurer : configurers) {
-			configurer.configure(resources);
 		}
 	}
 

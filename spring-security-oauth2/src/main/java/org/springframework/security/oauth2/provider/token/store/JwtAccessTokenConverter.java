@@ -22,7 +22,6 @@ import java.util.Map;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.codehaus.jackson.map.ObjectMapper;
 import org.springframework.beans.factory.InitializingBean;
 import org.springframework.security.crypto.codec.Base64;
 import org.springframework.security.jwt.Jwt;
@@ -40,6 +39,8 @@ import org.springframework.security.oauth2.common.ExpiringOAuth2RefreshToken;
 import org.springframework.security.oauth2.common.OAuth2AccessToken;
 import org.springframework.security.oauth2.common.OAuth2RefreshToken;
 import org.springframework.security.oauth2.common.exceptions.InvalidTokenException;
+import org.springframework.security.oauth2.common.util.JsonParser;
+import org.springframework.security.oauth2.common.util.JsonParserFactory;
 import org.springframework.security.oauth2.common.util.RandomValueStringGenerator;
 import org.springframework.security.oauth2.provider.OAuth2Authentication;
 import org.springframework.security.oauth2.provider.token.AccessTokenConverter;
@@ -64,11 +65,16 @@ public class JwtAccessTokenConverter implements TokenEnhancer, AccessTokenConver
 	 */
 	public static final String TOKEN_ID = AccessTokenConverter.JTI;
 
+	/**
+	 * Field name for access token id.
+	 */
+	public static final String ACCESS_TOKEN_ID = AccessTokenConverter.ATI;
+
 	private static final Log logger = LogFactory.getLog(JwtAccessTokenConverter.class);
 
 	private AccessTokenConverter tokenConverter = new DefaultAccessTokenConverter();
 
-	private ObjectMapper objectMapper = new ObjectMapper();
+	private JsonParser objectMapper = JsonParserFactory.create();
 
 	private String verifierKey = new RandomValueStringGenerator().generate();
 
@@ -200,6 +206,7 @@ public class JwtAccessTokenConverter implements TokenEnhancer, AccessTokenConver
 			encodedRefreshToken.setValue(refreshToken.getValue());
 			Map<String, Object> refreshTokenInfo = new LinkedHashMap<String, Object>(accessToken.getAdditionalInformation());
 			refreshTokenInfo.put(TOKEN_ID, encodedRefreshToken.getValue());
+			refreshTokenInfo.put(ACCESS_TOKEN_ID, tokenId);
 			encodedRefreshToken.setAdditionalInformation(refreshTokenInfo);
 			DefaultOAuth2RefreshToken token = new DefaultOAuth2RefreshToken(encode(encodedRefreshToken, authentication));
 			if (refreshToken instanceof ExpiringOAuth2RefreshToken) {
@@ -211,11 +218,15 @@ public class JwtAccessTokenConverter implements TokenEnhancer, AccessTokenConver
 		}
 		return result;
 	}
+	
+	public boolean isRefreshToken(OAuth2AccessToken token) {
+		return token.getAdditionalInformation().containsKey(ACCESS_TOKEN_ID);
+	}
 
 	protected String encode(OAuth2AccessToken accessToken, OAuth2Authentication authentication) {
 		String content;
 		try {
-			content = objectMapper.writeValueAsString(tokenConverter.convertAccessToken(accessToken, authentication));
+			content = objectMapper.formatMap(tokenConverter.convertAccessToken(accessToken, authentication));
 		}
 		catch (Exception e) {
 			throw new IllegalStateException("Cannot convert access token to JSON", e);
@@ -228,8 +239,7 @@ public class JwtAccessTokenConverter implements TokenEnhancer, AccessTokenConver
 		try {
 			Jwt jwt = JwtHelper.decodeAndVerify(token, verifier);
 			String content = jwt.getClaims();
-			@SuppressWarnings("unchecked")
-			Map<String, Object> map = objectMapper.readValue(content, Map.class);
+			Map<String, Object> map = objectMapper.parseMap(content);
 			if (map.containsKey(EXP) && map.get(EXP) instanceof Integer) {
 				Integer intValue = (Integer) map.get(EXP);
 				map.put(EXP, new Long(intValue));
@@ -267,4 +277,5 @@ public class JwtAccessTokenConverter implements TokenEnhancer, AccessTokenConver
 		}
 		this.verifier = verifier;
 	}
+
 }

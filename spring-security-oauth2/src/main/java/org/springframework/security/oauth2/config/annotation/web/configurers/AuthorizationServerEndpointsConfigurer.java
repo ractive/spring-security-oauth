@@ -16,11 +16,20 @@
 package org.springframework.security.oauth2.config.annotation.web.configurers;
 
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
+import org.springframework.http.HttpMethod;
 import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.AuthenticationProvider;
+import org.springframework.security.authentication.ProviderManager;
+import org.springframework.security.core.userdetails.UserDetailsByNameServiceWrapper;
+import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.oauth2.config.annotation.configurers.ClientDetailsServiceConfigurer;
 import org.springframework.security.oauth2.config.annotation.web.configuration.AuthorizationServerConfigurerAdapter;
 import org.springframework.security.oauth2.provider.ClientDetailsService;
@@ -39,6 +48,8 @@ import org.springframework.security.oauth2.provider.code.AuthorizationCodeServic
 import org.springframework.security.oauth2.provider.code.AuthorizationCodeTokenGranter;
 import org.springframework.security.oauth2.provider.code.InMemoryAuthorizationCodeServices;
 import org.springframework.security.oauth2.provider.endpoint.FrameworkEndpointHandlerMapping;
+import org.springframework.security.oauth2.provider.error.DefaultWebResponseExceptionTranslator;
+import org.springframework.security.oauth2.provider.error.WebResponseExceptionTranslator;
 import org.springframework.security.oauth2.provider.implicit.ImplicitTokenGranter;
 import org.springframework.security.oauth2.provider.password.ResourceOwnerPasswordTokenGranter;
 import org.springframework.security.oauth2.provider.refresh.RefreshTokenGranter;
@@ -55,6 +66,8 @@ import org.springframework.security.oauth2.provider.token.TokenStore;
 import org.springframework.security.oauth2.provider.token.store.InMemoryTokenStore;
 import org.springframework.security.oauth2.provider.token.store.JwtAccessTokenConverter;
 import org.springframework.security.oauth2.provider.token.store.JwtTokenStore;
+import org.springframework.security.web.authentication.preauth.PreAuthenticatedAuthenticationProvider;
+import org.springframework.security.web.authentication.preauth.PreAuthenticatedAuthenticationToken;
 import org.springframework.web.context.request.WebRequestInterceptor;
 import org.springframework.web.servlet.HandlerInterceptor;
 
@@ -99,6 +112,8 @@ public final class AuthorizationServerEndpointsConfigurer {
 
 	private Map<String, String> patternMap = new HashMap<String, String>();
 
+	private Set<HttpMethod> allowedTokenEndpointRequestMethods = new HashSet<HttpMethod>();
+
 	private FrameworkEndpointHandlerMapping frameworkEndpointHandlerMapping;
 
 	private boolean approvalStoreDisabled;
@@ -107,9 +122,15 @@ public final class AuthorizationServerEndpointsConfigurer {
 
 	private DefaultTokenServices defaultTokenServices;
 
+	private UserDetailsService userDetailsService;
+
 	private boolean tokenServicesOverride = false;
 
-	private boolean reuseRefreshToken;
+	private boolean userDetailsServiceOverride = false;
+
+	private boolean reuseRefreshToken = true;
+
+	private WebResponseExceptionTranslator exceptionTranslator;
 
 	public AuthorizationServerTokenServices getTokenServices() {
 		return tokenServices;
@@ -157,8 +178,8 @@ public final class AuthorizationServerEndpointsConfigurer {
 		return this;
 	}
 
-	public AuthorizationServerEndpointsConfigurer reuseRefreshTokens() {
-		this.reuseRefreshToken = true;
+	public AuthorizationServerEndpointsConfigurer reuseRefreshTokens(boolean reuseRefreshToken) {
+		this.reuseRefreshToken = reuseRefreshToken;
 		return this;
 	}
 
@@ -169,12 +190,18 @@ public final class AuthorizationServerEndpointsConfigurer {
 
 	public AuthorizationServerEndpointsConfigurer tokenServices(AuthorizationServerTokenServices tokenServices) {
 		this.tokenServices = tokenServices;
-		this.tokenServicesOverride = true;
+		if (tokenServices!=null) {
+			this.tokenServicesOverride = true;
+		}
 		return this;
 	}
 
 	public boolean isTokenServicesOverride() {
 		return tokenServicesOverride;
+	}
+	
+	public boolean isUserDetailsServiceOverride() {
+		return userDetailsServiceOverride;
 	}
 
 	public AuthorizationServerEndpointsConfigurer userApprovalHandler(UserApprovalHandler approvalHandler) {
@@ -212,6 +239,11 @@ public final class AuthorizationServerEndpointsConfigurer {
 
 	public AuthorizationServerEndpointsConfigurer addInterceptor(WebRequestInterceptor interceptor) {
 		this.interceptors.add(interceptor);
+		return this;
+	}
+
+	public AuthorizationServerEndpointsConfigurer exceptionTranslator(WebResponseExceptionTranslator exceptionTranslator) {
+		this.exceptionTranslator = exceptionTranslator;
 		return this;
 	}
 
@@ -255,6 +287,19 @@ public final class AuthorizationServerEndpointsConfigurer {
 		return this;
 	}
 
+	public AuthorizationServerEndpointsConfigurer allowedTokenEndpointRequestMethods(HttpMethod... requestMethods) {
+		Collections.addAll(allowedTokenEndpointRequestMethods, requestMethods);
+		return this;
+	}
+
+	public AuthorizationServerEndpointsConfigurer userDetailsService(UserDetailsService userDetailsService) {
+		if (userDetailsService != null) {
+			this.userDetailsService = userDetailsService;
+			this.userDetailsServiceOverride = true;
+		}
+		return this;
+	}
+
 	public ConsumerTokenServices getConsumerTokenServices() {
 		return consumerTokenServices();
 	}
@@ -265,6 +310,10 @@ public final class AuthorizationServerEndpointsConfigurer {
 
 	public AuthorizationCodeServices getAuthorizationCodeServices() {
 		return authorizationCodeServices();
+	}
+
+	public Set<HttpMethod> getAllowedTokenEndpointRequestMethods() {
+		return allowedTokenEndpointRequestMethods();
 	}
 
 	public OAuth2RequestValidator getRequestValidator() {
@@ -279,6 +328,10 @@ public final class AuthorizationServerEndpointsConfigurer {
 		return frameworkEndpointHandlerMapping();
 	}
 
+	public WebResponseExceptionTranslator getExceptionTranslator() {
+		return exceptionTranslator();
+	}
+
 	private ResourceServerTokenServices resourceTokenServices() {
 		if (resourceTokenServices == null) {
 			if (tokenServices instanceof ResourceServerTokenServices) {
@@ -287,6 +340,14 @@ public final class AuthorizationServerEndpointsConfigurer {
 			resourceTokenServices = createDefaultTokenServices();
 		}
 		return resourceTokenServices;
+	}
+
+	private Set<HttpMethod> allowedTokenEndpointRequestMethods() {
+		// HTTP POST should be the only allowed endpoint request method by default.
+		if (allowedTokenEndpointRequestMethods.isEmpty()) {
+			allowedTokenEndpointRequestMethods.add(HttpMethod.POST);
+		}
+		return allowedTokenEndpointRequestMethods;
 	}
 
 	private ConsumerTokenServices consumerTokenServices() {
@@ -322,6 +383,7 @@ public final class AuthorizationServerEndpointsConfigurer {
 		tokenServices.setReuseRefreshToken(reuseRefreshToken);
 		tokenServices.setClientDetailsService(clientDetailsService());
 		tokenServices.setTokenEnhancer(tokenEnhancer());
+		addUserDetailsService(tokenServices, this.userDetailsService);
 		return tokenServices;
 	}
 
@@ -368,7 +430,20 @@ public final class AuthorizationServerEndpointsConfigurer {
 		if (clientDetailsService == null) {
 			this.clientDetailsService = new InMemoryClientDetailsService();
 		}
+		if (this.defaultTokenServices != null) {
+			addUserDetailsService(defaultTokenServices, userDetailsService);
+		}
 		return this.clientDetailsService;
+	}
+
+	private void addUserDetailsService(DefaultTokenServices tokenServices, UserDetailsService userDetailsService) {
+		if (userDetailsService != null) {
+			PreAuthenticatedAuthenticationProvider provider = new PreAuthenticatedAuthenticationProvider();
+			provider.setPreAuthenticatedUserDetailsService(new UserDetailsByNameServiceWrapper<PreAuthenticatedAuthenticationToken>(
+					userDetailsService));
+			tokenServices.setAuthenticationManager(
+					new ProviderManager(Arrays.<AuthenticationProvider> asList(provider)));
+		}
 	}
 
 	private UserApprovalHandler userApprovalHandler() {
@@ -399,6 +474,14 @@ public final class AuthorizationServerEndpointsConfigurer {
 			authorizationCodeServices = new InMemoryAuthorizationCodeServices();
 		}
 		return authorizationCodeServices;
+	}
+
+	private WebResponseExceptionTranslator exceptionTranslator() {
+		if (exceptionTranslator != null) {
+			return exceptionTranslator;
+		}
+		exceptionTranslator = new DefaultWebResponseExceptionTranslator();
+		return exceptionTranslator;
 	}
 
 	private OAuth2RequestFactory requestFactory() {
@@ -449,4 +532,5 @@ public final class AuthorizationServerEndpointsConfigurer {
 		}
 		return frameworkEndpointHandlerMapping;
 	}
+
 }

@@ -48,10 +48,12 @@ import org.springframework.security.oauth2.provider.approval.DefaultUserApproval
 import org.springframework.security.oauth2.provider.approval.InMemoryApprovalStore;
 import org.springframework.security.oauth2.provider.client.BaseClientDetails;
 import org.springframework.security.oauth2.provider.code.AuthorizationCodeServices;
+import org.springframework.util.MultiValueMap;
 import org.springframework.web.bind.support.SimpleSessionStatus;
 import org.springframework.web.servlet.ModelAndView;
 import org.springframework.web.servlet.View;
 import org.springframework.web.servlet.view.RedirectView;
+import org.springframework.web.util.UriComponentsBuilder;
 
 /**
  * @author Dave Syer
@@ -120,7 +122,6 @@ public class AuthorizationEndpointTests {
 
 	@Test
 	public void testStartAuthorizationCodeFlow() throws Exception {
-
 		ModelAndView result = endpoint.authorize(model,
 				getAuthorizationRequest("foo", null, null, "read", Collections.singleton("code"))
 						.getRequestParameters(), sessionStatus, principal);
@@ -200,7 +201,35 @@ public class AuthorizationEndpointTests {
 						Collections.singleton("code")));
 		View result = endpoint.approveOrDeny(Collections.singletonMap(OAuth2Utils.USER_OAUTH_APPROVAL, "true"), model,
 				sessionStatus, principal);
-		assertEquals("http://anywhere.com?foo=b%20%3D&bar=f%20$&code=thecode", ((RedirectView) result).getUrl());
+		String url = ((RedirectView) result).getUrl();
+		assertEquals("http://anywhere.com?foo=b%20=&bar=f%20$&code=thecode", url);
+		MultiValueMap<String, String> params = UriComponentsBuilder.fromHttpUrl(url).build().getQueryParams();
+		assertEquals("[b%20=]", params.get("foo").toString());
+		assertEquals("[f%20$]", params.get("bar").toString());
+	}
+
+	@Test
+	public void testAuthorizationCodeWithTrickyEncodedQueryParams() throws Exception {
+		endpoint.setAuthorizationCodeServices(new StubAuthorizationCodeServices());
+		model.put(
+				"authorizationRequest",
+				getAuthorizationRequest("foo", "http://anywhere.com/path?foo=b%20%3D&bar=f%20$", null, null,
+						Collections.singleton("code")));
+		View result = endpoint.approveOrDeny(Collections.singletonMap(OAuth2Utils.USER_OAUTH_APPROVAL, "true"), model,
+				sessionStatus, principal);
+		assertEquals("http://anywhere.com/path?foo=b%20%3D&bar=f%20$&code=thecode", ((RedirectView) result).getUrl());
+	}
+
+	@Test
+	public void testAuthorizationCodeWithMoreTrickyEncodedQueryParams() throws Exception {
+		endpoint.setAuthorizationCodeServices(new StubAuthorizationCodeServices());
+		model.put(
+				"authorizationRequest",
+				getAuthorizationRequest("foo", "http://anywhere?t=a%3Db%26ep%3Dtest%2540test.me", null, null,
+						Collections.singleton("code")));
+		View result = endpoint.approveOrDeny(Collections.singletonMap(OAuth2Utils.USER_OAUTH_APPROVAL, "true"), model,
+				sessionStatus, principal);
+		assertEquals("http://anywhere?t=a%3Db%26ep%3Dtest%2540test.me&code=thecode", ((RedirectView) result).getUrl());
 	}
 
 	@Test
@@ -332,6 +361,28 @@ public class AuthorizationEndpointTests {
 		});
 		AuthorizationRequest authorizationRequest = getAuthorizationRequest("foo", "http://anywhere.com?foo=bar",
 				"mystate", "myscope", Collections.singleton("token"));
+		ModelAndView result = endpoint.authorize(model, authorizationRequest.getRequestParameters(), sessionStatus,
+				principal);
+		String url = ((RedirectView) result.getView()).getUrl();
+		assertTrue("Wrong url: " + result, url.contains("foo=bar"));
+	}
+
+	@Test
+	public void testImplicitWithAdditionalInfo() throws Exception {
+		endpoint.setTokenGranter(new TokenGranter() {
+			public OAuth2AccessToken grant(String grantType, TokenRequest tokenRequest) {
+				DefaultOAuth2AccessToken token = new DefaultOAuth2AccessToken("FOO");
+				token.setAdditionalInformation(Collections.<String, Object> singletonMap("foo", "bar"));
+				return token;
+			}
+		});
+		endpoint.setUserApprovalHandler(new DefaultUserApprovalHandler() {
+			public boolean isApproved(AuthorizationRequest authorizationRequest, Authentication userAuthentication) {
+				return true;
+			}
+		});
+		AuthorizationRequest authorizationRequest = getAuthorizationRequest("foo", "http://anywhere.com", "mystate",
+				"myscope", Collections.singleton("token"));
 		ModelAndView result = endpoint.authorize(model, authorizationRequest.getRequestParameters(), sessionStatus,
 				principal);
 		String url = ((RedirectView) result.getView()).getUrl();

@@ -24,6 +24,8 @@ import org.springframework.context.annotation.Import;
 import org.springframework.core.annotation.Order;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.WebSecurityConfigurerAdapter;
+import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.oauth2.config.annotation.configuration.ClientDetailsServiceConfiguration;
 import org.springframework.security.oauth2.config.annotation.configurers.ClientDetailsServiceConfigurer;
 import org.springframework.security.oauth2.config.annotation.web.configurers.AuthorizationServerSecurityConfigurer;
@@ -66,6 +68,10 @@ public class AuthorizationServerSecurityConfiguration extends WebSecurityConfigu
 		String tokenEndpointPath = handlerMapping.getServletPath("/oauth/token");
 		String tokenKeyPath = handlerMapping.getServletPath("/oauth/token_key");
 		String checkTokenPath = handlerMapping.getServletPath("/oauth/check_token");
+		if (!endpoints.getEndpointsConfigurer().isUserDetailsServiceOverride()) {
+			UserDetailsService userDetailsService = http.getSharedObject(UserDetailsService.class);
+			endpoints.getEndpointsConfigurer().userDetailsService(userDetailsService);
+		}
 		// @formatter:off
 		http
         	.authorizeRequests()
@@ -74,7 +80,9 @@ public class AuthorizationServerSecurityConfiguration extends WebSecurityConfigu
             	.antMatchers(checkTokenPath).access(configurer.getCheckTokenAccess())
         .and()
         	.requestMatchers()
-            	.antMatchers(tokenEndpointPath, tokenKeyPath, checkTokenPath);
+            	.antMatchers(tokenEndpointPath, tokenKeyPath, checkTokenPath)
+        .and()
+        	.sessionManagement().sessionCreationPolicy(SessionCreationPolicy.NEVER);
 		// @formatter:on
 		http.setSharedObject(ClientDetailsService.class, clientDetailsService);
 	}

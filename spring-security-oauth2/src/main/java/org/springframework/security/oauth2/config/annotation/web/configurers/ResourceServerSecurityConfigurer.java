@@ -19,6 +19,7 @@ import java.util.Collections;
 
 import org.springframework.http.MediaType;
 import org.springframework.security.access.expression.SecurityExpressionHandler;
+import org.springframework.security.authentication.AuthenticationEventPublisher;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.config.annotation.SecurityConfigurerAdapter;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -62,6 +63,8 @@ public final class ResourceServerSecurityConfigurer extends
 
 	private AuthenticationManager authenticationManager;
 
+	private AuthenticationEventPublisher eventPublisher = null;
+
 	private ResourceServerTokenServices resourceTokenServices;
 
 	private TokenStore tokenStore = new InMemoryTokenStore();
@@ -71,6 +74,8 @@ public final class ResourceServerSecurityConfigurer extends
 	private SecurityExpressionHandler<FilterInvocation> expressionHandler = new OAuth2WebSecurityExpressionHandler();
 
 	private TokenExtractor tokenExtractor;
+
+	private boolean stateless = true;
 
 	public ResourceServerSecurityConfigurer() {
 		resourceId(resourceId);
@@ -82,6 +87,16 @@ public final class ResourceServerSecurityConfigurer extends
 
 	public TokenStore getTokenStore() {
 		return tokenStore;
+	}
+
+	/**
+	 * Flag to indicate that only token-based authentication is allowed on these resources.
+	 * @param stateless the flag value (default true)
+	 * @return this (for fluent builder)
+	 */
+	public ResourceServerSecurityConfigurer stateless(boolean stateless) {
+		this.stateless = stateless;
+		return this;
 	}
 
 	public ResourceServerSecurityConfigurer authenticationEntryPoint(AuthenticationEntryPoint authenticationEntryPoint) {
@@ -97,6 +112,12 @@ public final class ResourceServerSecurityConfigurer extends
 	public ResourceServerSecurityConfigurer tokenStore(TokenStore tokenStore) {
 		Assert.state(tokenStore != null, "TokenStore cannot be null");
 		this.tokenStore = tokenStore;
+		return this;
+	}
+
+	public ResourceServerSecurityConfigurer eventPublisher(AuthenticationEventPublisher eventPublisher) {
+		Assert.state(eventPublisher != null, "AuthenticationEventPublisher cannot be null");
+		this.eventPublisher = eventPublisher;
 		return this;
 	}
 
@@ -128,7 +149,6 @@ public final class ResourceServerSecurityConfigurer extends
 	@Override
 	public void init(HttpSecurity http) throws Exception {
 		registerDefaultAuthenticationEntryPoint(http);
-		http.csrf().disable();
 	}
 
 	@SuppressWarnings("unchecked")
@@ -165,17 +185,23 @@ public final class ResourceServerSecurityConfigurer extends
 		resourcesServerFilter = new OAuth2AuthenticationProcessingFilter();
 		resourcesServerFilter.setAuthenticationEntryPoint(authenticationEntryPoint);
 		resourcesServerFilter.setAuthenticationManager(oauthAuthenticationManager);
+		if (eventPublisher != null) {
+			resourcesServerFilter.setAuthenticationEventPublisher(eventPublisher);
+		}
 		if (tokenExtractor != null) {
 			resourcesServerFilter.setTokenExtractor(tokenExtractor);
 		}
 		resourcesServerFilter = postProcess(resourcesServerFilter);
+		resourcesServerFilter.setStateless(stateless);
 
 		// @formatter:off
 		http
 			.authorizeRequests().expressionHandler(expressionHandler)
 		.and()
 			.addFilterBefore(resourcesServerFilter, AbstractPreAuthenticatedProcessingFilter.class)
-			.exceptionHandling().accessDeniedHandler(accessDeniedHandler);
+			.exceptionHandling()
+				.accessDeniedHandler(accessDeniedHandler)
+				.authenticationEntryPoint(authenticationEntryPoint);
 		// @formatter:on
 	}
 
@@ -215,6 +241,10 @@ public final class ResourceServerSecurityConfigurer extends
 	private TokenStore tokenStore() {
 		Assert.state(tokenStore != null, "TokenStore cannot be null");
 		return this.tokenStore;
+	}
+
+	public AccessDeniedHandler getAccessDeniedHandler() {
+		return this.accessDeniedHandler;
 	}
 
 }
