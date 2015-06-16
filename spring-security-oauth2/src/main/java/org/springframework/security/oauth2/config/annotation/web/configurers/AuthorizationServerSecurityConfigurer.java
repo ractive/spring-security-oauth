@@ -63,6 +63,13 @@ public final class AuthorizationServerSecurityConfigurer extends
 
 	private String checkTokenAccess = "denyAll()";
 
+	private boolean sslOnly = false;
+
+	public AuthorizationServerSecurityConfigurer sslOnly() {
+		this.sslOnly = true;
+		return this;
+	}
+
 	public AuthorizationServerSecurityConfigurer allowFormAuthenticationForClients() {
 		this.allowFormAuthenticationForClients = true;
 		return this;
@@ -166,6 +173,9 @@ public final class AuthorizationServerSecurityConfigurer extends
 			clientCredentialsTokenEndpointFilter(http);
 		}
 		http.exceptionHandling().accessDeniedHandler(accessDeniedHandler);
+		if (sslOnly ) {
+			http.requiresChannel().anyRequest().requiresSecure();
+		}
 
 	}
 
@@ -174,6 +184,10 @@ public final class AuthorizationServerSecurityConfigurer extends
 				frameworkEndpointHandlerMapping().getServletPath("/oauth/token"));
 		clientCredentialsTokenEndpointFilter
 				.setAuthenticationManager(http.getSharedObject(AuthenticationManager.class));
+		OAuth2AuthenticationEntryPoint authenticationEntryPoint = new OAuth2AuthenticationEntryPoint();
+		authenticationEntryPoint.setTypeName("Form");
+		authenticationEntryPoint.setRealmName(realm);
+		clientCredentialsTokenEndpointFilter.setAuthenticationEntryPoint(authenticationEntryPoint);
 		clientCredentialsTokenEndpointFilter = postProcess(clientCredentialsTokenEndpointFilter);
 		http.addFilterBefore(clientCredentialsTokenEndpointFilter, BasicAuthenticationFilter.class);
 		return clientCredentialsTokenEndpointFilter;
